@@ -1,7 +1,7 @@
 #define BUS_NUMBER "2221" 
 
 #include <NimBLEDevice.h>
-#include <Wire.h>       
+#include <Wire.h>        
 #include <LiquidCrystal_I2C.h>
 #include <Adafruit_NeoPixel.h>
 #include <Arduino.h>
@@ -12,7 +12,7 @@
 #include "AudioOutputI2S.h"
 #include "sound_data.h" // 우리가 만든 MP3 데이터 (반드시 탭에 있어야 함!)
 
-// ====== 핀 설정 (사용자 최종 검증 완료) ======
+// ====== 핀 설정 ======
 #define LED_PIN    3   // LED (GPIO 3)
 #define NUM_PIXELS 30
 #define I2C_SDA    4   // LCD SDA
@@ -67,7 +67,7 @@ void playMP3() {
 
   // 기존 재생 중이면 중지
   if (mp3->isRunning()) mp3->stop();
-  
+   
   // 파일 포인터 처음으로 리셋 (mom_mp3 사용)
   file->open(mom_mp3, sizeof(mom_mp3));
   mp3->begin(file, out);
@@ -86,27 +86,51 @@ class MyServerCallbacks: public NimBLEServerCallbacks {
     }
 };
 
+// ====== [수정됨] 콜백 클래스 ======
 class MyCallbacks: public NimBLECharacteristicCallbacks {
     void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo& connInfo) {
       std::string rxValue = pCharacteristic->getValue();
+      
       if (rxValue.length() > 0) {
         Serial.print("Received: "); Serial.println(rxValue.c_str());
         
-        if(rxValue == "COURTESY_SEAT") {
-            // 1. MP3 재생
-            playMP3();
+        bool triggerAction = false; // 동작 실행 여부
+        bool playSound = false;     // 소리 재생 여부
 
-            // 2. LCD 표시
+        // 1. 기본 신호 (소리 O) -> "DEFAULT"
+        if(rxValue == "DEFAULT") {
+            triggerAction = true;
+            playSound = true; 
+        }
+        // 2. 무음 신호 (소리 X) -> "SILENT"
+        else if(rxValue == "SILENT") {
+            triggerAction = true;
+            playSound = false;
+        }
+
+        // 동작 실행
+        if (triggerAction) {
+            // (1) MP3 재생 (playSound가 true일 때만)
+            if (playSound) {
+                playMP3();
+            }
+
+            // (2) LCD 표시
             isMessageDisplaying = true;
             messageStartTime = millis(); 
-            lcd.setCursor(0, 2); lcd.print("COURTESY_SEAT Signal");
-            lcd.setCursor(0, 3); lcd.print("Voice Alert...      ");
+            lcd.setCursor(0, 2); lcd.print("COURTESY_SEAT Signal"); // LCD 텍스트는 그대로 유지
+            
+            // 소리 유무에 따라 상태 표시
+            lcd.setCursor(0, 3); 
+            if(playSound) lcd.print("Voice Alert...      ");
+            else          lcd.print("Silent Alert...     ");
 
-            // 3. LED 켜기
+            // (3) LED 켜기
             isLedOn = true;
             ledStartTime = millis();
             setBlue(); 
 
+            // (4) 앱으로 응답(ACK) 전송
             pTxCharacteristic->setValue("ACK");
             pTxCharacteristic->notify(connInfo.getConnHandle());
         }
@@ -116,11 +140,11 @@ class MyCallbacks: public NimBLECharacteristicCallbacks {
 
 void setup() {
   Serial.begin(115200);
-  delay(2000); // 전원 안정화 대기 (중요!)
+  delay(2000); 
   Serial.println("\n=== System Booting... ===");
   Serial.print("Free Heap at start: "); Serial.println(ESP.getFreeHeap());
 
-  // 1. BLE 설정 (기본 설정만)
+  // 1. BLE 설정
   Serial.println("1. Configuring BLE...");
   NimBLEDevice::init(deviceName.c_str());
   NimBLEDevice::setPower(ESP_PWR_LVL_P9);
@@ -129,9 +153,9 @@ void setup() {
   NimBLEService *pService = pServer->createService(SERVICE_UUID);
   pTxCharacteristic = pService->createCharacteristic(CHARACTERISTIC_UUID_TX, NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::READ);
   NimBLECharacteristic *pRxCharacteristic = pService->createCharacteristic(CHARACTERISTIC_UUID_RX, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
-  pRxCharacteristic->setCallbacks(new MyCallbacks());
+  pRxCharacteristic->setCallbacks(new MyCallbacks()); 
   pService->start();
-  
+   
   // 2. LED 초기화
   Serial.println("2. Initializing LED...");
   pixels.begin(); pixels.setBrightness(50); setOff();
@@ -143,15 +167,15 @@ void setup() {
   lcd.setCursor(0, 0); lcd.print("BUS_NUM: "); lcd.print(BUS_NUMBER);
   lcd.setCursor(0, 1); lcd.print("System Ready");
 
-  // 4. 오디오 초기화 (mom_mp3 사용)
+  // 4. 오디오 초기화
   Serial.println("4. Initializing Audio...");
   file = new AudioFileSourcePROGMEM(mom_mp3, sizeof(mom_mp3));
   out = new AudioOutputI2S();
   out->SetPinout(I2S_BCLK, I2S_LRC, I2S_DIN);
   mp3 = new AudioGeneratorMP3();
-  
+   
   Serial.print("Free Heap after init: "); Serial.println(ESP.getFreeHeap());
-  
+   
   // 5. BLE 광고 시작
   Serial.println("5. Starting BLE Advertising...");
   NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
@@ -159,13 +183,13 @@ void setup() {
   advertisementData.setCompleteServices(NimBLEUUID(SERVICE_UUID)); 
   advertisementData.setName(deviceName.c_str());
   pAdvertising->setAdvertisementData(advertisementData);
-  
+   
   NimBLEAdvertisementData scanResponseData;
   scanResponseData.setName(deviceName.c_str());
   pAdvertising->setScanResponseData(scanResponseData);
-  
+   
   pAdvertising->start();
-  
+   
   Serial.println("=== Setup Complete ===");
 }
 
@@ -190,7 +214,7 @@ void loop() {
     lcd.setCursor(0, 2); lcd.print("                    ");
     lcd.setCursor(0, 3); lcd.print("                    ");
   }
-  
+   
   // BLE 연결 상태 업데이트
   static int prevDevices = -1;
   if (connectedDevices != prevDevices) {
@@ -205,6 +229,5 @@ void loop() {
   static unsigned long lastHeartbeat = 0;
   if (millis() - lastHeartbeat > 1000) {
       lastHeartbeat = millis();
-      // Serial.print("."); 
   }
 }
